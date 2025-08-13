@@ -1,3 +1,4 @@
+const fs = require('fs/promises');
 const express = require('express');
 const cors = require('cors');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers } = require('@whiskeysockets/baileys');
