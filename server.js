@@ -1,4 +1,4 @@
-const fs = require('fs/promises');
+const fs = require('fs/promises'); // <-- ADICIONADO PARA GERENCIAR ARQUIVOS
 const express = require('express');
 const cors = require('cors');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers } = require('@whiskeysockets/baileys');
@@ -34,8 +34,6 @@ const connectToWhatsApp = async () => {
     console.log('Iniciando uma nova instância de conexão Baileys...');
 
     try {
-        // --- ALTERAÇÃO AQUI ---
-        // A sessão agora será salva em um disco persistente montado em /data/
         const { state, saveCreds } = await useMultiFileAuthState('/data/auth_info_baileys');
 
         socket = makeWASocket({
@@ -74,13 +72,13 @@ const connectToWhatsApp = async () => {
                 qrCode = '';
 
                 // Lógica de reconexão inteligente
-                const shouldReconnect = statusCode !== DisconnectReason.loggedOut && 
+                const shouldReconnect = statusCode !== DisconnectReason.loggedOut &&
                                         statusCode !== DisconnectReason.connectionReplaced &&
                                         statusCode !== DisconnectReason.multideviceMismatch;
 
                 if (shouldReconnect) {
                     console.log('🟡 Tentando reconectar em 10 segundos...');
-                    setTimeout(startConnectionProcess, 10000); 
+                    setTimeout(startConnectionProcess, 10000);
                 } else {
                     console.log('🔴 Não será reconectado automaticamente. Sessão encerrada ou substituída.');
                 }
@@ -163,13 +161,13 @@ app.post('/api/wpp/send-message', async (req, res) => {
         // Remove caracteres especiais e garante formato correto
         const cleanPhone = phone.replace(/\D/g, '');
         const recipientId = `${cleanPhone}@s.whatsapp.net`;
-        
+
         // Verifica se o número existe no WhatsApp
         const [result] = await socket.onWhatsApp(recipientId);
         if (!result || !result.exists) {
             return res.status(400).json({ error: 'Número não encontrado no WhatsApp.' });
         }
-        
+
         await socket.sendMessage(recipientId, { text: message });
         console.log(`✉️ Mensagem enviada para ${cleanPhone}`);
         res.json({ success: true, message: `Mensagem enviada para ${cleanPhone}` });
@@ -203,18 +201,46 @@ app.post('/api/wpp/close-session', async (req, res) => {
     }
 });
 
+// --- NOVA ROTA DE RESET ---
+app.post('/api/wpp/reset-session', async (req, res) => {
+    console.log('🟡 Resetando a sessão...');
+
+    // Primeiro, encerra o socket atual se ele existir
+    if (socket) {
+        await socket.logout();
+        socket = null;
+    }
+
+    // Apaga a pasta de autenticação
+    try {
+        await fs.rm('/data/auth_info_baileys', { recursive: true, force: true });
+        console.log('✅ Pasta de autenticação removida.');
+    } catch (error) {
+        console.error('❌ Erro ao remover a pasta de autenticação:', error.message);
+    }
+
+    // Zera o estado da conexão
+    connectionState.status = 'disconnected';
+    connectionState.phoneNumber = '';
+    connectionState.isConnecting = false;
+    qrCode = '';
+
+    res.json({ success: true, message: 'Sessão resetada. Inicie uma nova conexão para gerar um novo QR Code.' });
+});
+
+
 // Endpoint de saúde
 app.get('/health', (req, res) => {
-    res.json({ 
-        status: 'ok', 
+    res.json({
+        status: 'ok',
         timestamp: new Date().toISOString(),
-        whatsapp: connectionState 
+        whatsapp: connectionState
     });
 });
 
 // Endpoint raiz
 app.get('/', (req, res) => {
-    res.json({ 
+    res.json({
         message: 'WhatsApp Bot API - Baileys',
         status: connectionState.status,
         endpoints: [
@@ -222,7 +248,8 @@ app.get('/', (req, res) => {
             'GET /api/wpp/qr-code',
             'GET /api/wpp/status',
             'POST /api/wpp/send-message',
-            'POST /api/wpp/close-session'
+            'POST /api/wpp/close-session',
+            'POST /api/wpp/reset-session' // <-- ENDPOINT ADICIONADO À LISTA
         ]
     });
 });
