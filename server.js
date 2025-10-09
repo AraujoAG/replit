@@ -1,4 +1,4 @@
-const fs = require('fs/promises'); // <-- ADICIONADO PARA GERENCIAR ARQUIVOS
+const fs = require('fs/promises');
 const express = require('express');
 const cors = require('cors');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers } = require('@whiskeysockets/baileys');
@@ -22,14 +22,13 @@ app.use(express.json());
 let socket = null;
 let qrCode = '';
 let connectionState = {
-    status: 'disconnected', // disconnected, connecting, connected, error
+    status: 'disconnected',
     phoneNumber: '',
-    isConnecting: false // Flag para prevenir múltiplas tentativas de conexão
+    isConnecting: false
 };
 
 // --- Funções de Conexão ---
 
-// Função que efetivamente cria a conexão
 const connectToWhatsApp = async () => {
     console.log('Iniciando uma nova instância de conexão Baileys...');
 
@@ -49,8 +48,8 @@ const connectToWhatsApp = async () => {
             markOnlineOnConnect: false
         });
 
-    // Listener principal para o estado da conexão
-        socket.ev.on('connection.update', (update) => {
+        // Listener principal para o estado da conexão
+        socket.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update;
 
             if (qr) {
@@ -64,15 +63,16 @@ const connectToWhatsApp = async () => {
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
                 console.log(`🔴 Conexão fechada. Motivo: ${statusCode || 'Desconhecido'}`);
 
-                    if (statusCode === 401) {
-        console.log('⚠️ Sessão inválida detectada (401). Apagando credenciais antigas...');
-        try {
-            await fs.rm('/data/auth_info_baileys', { recursive: true, force: true });
-            console.log('✅ Credenciais antigas removidas.');
-        } catch (err) {
-            console.error('❌ Erro ao apagar credenciais:', err);
-        }
-    }
+                // Detecta sessão inválida
+                if (statusCode === 401) {
+                    console.log('⚠️ Sessão inválida detectada (401). Apagando credenciais antigas...');
+                    try {
+                        await fs.rm('/data/auth_info_baileys', { recursive: true, force: true });
+                        console.log('✅ Credenciais antigas removidas.');
+                    } catch (err) {
+                        console.error('❌ Erro ao apagar credenciais:', err);
+                    }
+                }
 
                 // A tentativa de conexão atual terminou
                 connectionState.isConnecting = false;
@@ -211,13 +211,17 @@ app.post('/api/wpp/close-session', async (req, res) => {
     }
 });
 
-// --- NOVA ROTA DE RESET ---
+// --- ROTA DE RESET ---
 app.post('/api/wpp/reset-session', async (req, res) => {
     console.log('🟡 Resetando a sessão...');
 
     // Primeiro, encerra o socket atual se ele existir
     if (socket) {
-        await socket.logout();
+        try {
+            await socket.logout();
+        } catch (err) {
+            console.error('⚠️ Erro ao fazer logout (pode ser ignorado):', err);
+        }
         socket = null;
     }
 
@@ -237,7 +241,6 @@ app.post('/api/wpp/reset-session', async (req, res) => {
 
     res.json({ success: true, message: 'Sessão resetada. Inicie uma nova conexão para gerar um novo QR Code.' });
 });
-
 
 // Endpoint de saúde
 app.get('/health', (req, res) => {
@@ -259,7 +262,7 @@ app.get('/', (req, res) => {
             'GET /api/wpp/status',
             'POST /api/wpp/send-message',
             'POST /api/wpp/close-session',
-            'POST /api/wpp/reset-session' // <-- ENDPOINT ADICIONADO À LISTA
+            'POST /api/wpp/reset-session'
         ]
     });
 });
