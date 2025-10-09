@@ -64,6 +64,16 @@ const connectToWhatsApp = async () => {
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
                 console.log(`🔴 Conexão fechada. Motivo: ${statusCode || 'Desconhecido'}`);
 
+                    if (statusCode === 401) {
+        console.log('⚠️ Sessão inválida detectada (401). Apagando credenciais antigas...');
+        try {
+            await fs.rm('/data/auth_info_baileys', { recursive: true, force: true });
+            console.log('✅ Credenciais antigas removidas.');
+        } catch (err) {
+            console.error('❌ Erro ao apagar credenciais:', err);
+        }
+    }
+
                 // A tentativa de conexão atual terminou
                 connectionState.isConnecting = false;
                 socket = null;
