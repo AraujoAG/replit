@@ -49,58 +49,60 @@ const connectToWhatsApp = async () => {
         });
 
         // Listener principal para o estado da conexão
-        socket.ev.on('connection.update', async (update) => {
-            const { connection, lastDisconnect, qr } = update;
+       socket.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect, qr } = update;
 
-            if (qr) {
-                qrCode = qr;
-                connectionState.status = 'connecting';
-                console.log('🟡 QR Code gerado. Escaneie para conectar.');
-                qrcode.generate(qr, { small: true });
+    if (qr) {
+        qrCode = qr;
+        connectionState.status = 'connecting';
+        console.log('🟡 QR Code gerado. Escaneie para conectar.');
+        qrcode.generate(qr, { small: true });
+    }
+
+    if (connection === 'close') {
+        const statusCode = lastDisconnect?.error?.output?.statusCode;
+        console.log(`🔴 Conexão fechada. Motivo: ${statusCode || 'Desconhecido'}`);
+
+        // ✅ CORREÇÃO: Tratar 401 e 405 como sessão inválida
+        if (statusCode === 401 || statusCode === 405) {
+            console.log(`⚠️ Sessão inválida detectada (${statusCode}). Apagando credenciais antigas...`);
+            try {
+                await fs.rm('/data/auth_info_baileys', { recursive: true, force: true });
+                console.log('✅ Credenciais antigas removidas.');
+            } catch (err) {
+                console.error('❌ Erro ao apagar credenciais:', err);
             }
+        }
 
-            if (connection === 'close') {
-                const statusCode = lastDisconnect?.error?.output?.statusCode;
-                console.log(`🔴 Conexão fechada. Motivo: ${statusCode || 'Desconhecido'}`);
+        // A tentativa de conexão atual terminou
+        connectionState.isConnecting = false;
+        socket = null;
+        connectionState.status = 'disconnected';
+        connectionState.phoneNumber = '';
+        qrCode = '';
 
-                // Detecta sessão inválida
-                if (statusCode === 401) {
-                    console.log('⚠️ Sessão inválida detectada (401). Apagando credenciais antigas...');
-                    try {
-                        await fs.rm('/data/auth_info_baileys', { recursive: true, force: true });
-                        console.log('✅ Credenciais antigas removidas.');
-                    } catch (err) {
-                        console.error('❌ Erro ao apagar credenciais:', err);
-                    }
-                }
+        // ✅ CORREÇÃO: Não reconectar se for erro de sessão (401, 405)
+        const shouldReconnect = statusCode !== DisconnectReason.loggedOut &&
+                                statusCode !== DisconnectReason.connectionReplaced &&
+                                statusCode !== DisconnectReason.multideviceMismatch &&
+                                statusCode !== 401 &&
+                                statusCode !== 405;
 
-                // A tentativa de conexão atual terminou
-                connectionState.isConnecting = false;
-                socket = null;
-                connectionState.status = 'disconnected';
-                connectionState.phoneNumber = '';
-                qrCode = '';
+        if (shouldReconnect) {
+            console.log('🟡 Tentando reconectar em 10 segundos...');
+            setTimeout(startConnectionProcess, 10000);
+        } else {
+            console.log('🔴 Não será reconectado automaticamente. Use /api/wpp/reset-session e inicie novamente.');
+        }
 
-                // Lógica de reconexão inteligente
-                const shouldReconnect = statusCode !== DisconnectReason.loggedOut &&
-                                        statusCode !== DisconnectReason.connectionReplaced &&
-                                        statusCode !== DisconnectReason.multideviceMismatch;
-
-                if (shouldReconnect) {
-                    console.log('🟡 Tentando reconectar em 10 segundos...');
-                    setTimeout(startConnectionProcess, 10000);
-                } else {
-                    console.log('🔴 Não será reconectado automaticamente. Sessão encerrada ou substituída.');
-                }
-
-            } else if (connection === 'open') {
-                connectionState.status = 'connected';
-                connectionState.phoneNumber = socket.user?.id?.split(':')[0] || 'Número não disponível';
-                connectionState.isConnecting = false;
-                qrCode = '';
-                console.log(`✅ Conexão estabelecida com o número: ${connectionState.phoneNumber}`);
-            }
-        });
+    } else if (connection === 'open') {
+        connectionState.status = 'connected';
+        connectionState.phoneNumber = socket.user?.id?.split(':')[0] || 'Número não disponível';
+        connectionState.isConnecting = false;
+        qrCode = '';
+        console.log(`✅ Conexão estabelecida com o número: ${connectionState.phoneNumber}`);
+    }
+});
 
         // Listener para salvar as credenciais da sessão
         socket.ev.on('creds.update', saveCreds);
