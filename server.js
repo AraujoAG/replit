@@ -1,8 +1,9 @@
-// server.js - Versão V5 (Caminho Novo + Debug de Arquivos)
+// server.js - Versão V6 (Correção de Identidade/Browser)
 const fs = require('fs/promises');
 const express = require('express');
 const cors = require('cors');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers } = require('@whiskeysockets/baileys');
+// ADICIONADO: fetchLatestBaileysVersion
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const qrcodeTerminal = require('qrcode-terminal');
 
@@ -18,8 +19,7 @@ app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 app.use(express.json());
 
-// --- CONSTANTE DO CAMINHO ---
-// MUDANÇA CRÍTICA: Nome novo para fugir do cache/arquivos travados do Docker/SO
+// Mantendo a pasta V5 que sabemos que está limpa
 const SESSION_PATH = '/data/session_v5_nova'; 
 
 let socket = null;
@@ -30,7 +30,6 @@ let connectionState = {
     isConnecting: false
 };
 
-// Função auxiliar para deletar pasta com segurança
 const safeDeleteSession = async () => {
     console.log(`🗑️ Tentando apagar pasta: ${SESSION_PATH}`);
     try {
@@ -44,23 +43,28 @@ const safeDeleteSession = async () => {
 const connectToWhatsApp = async () => {
     console.log(`🔌 Iniciando processo de conexão em: ${SESSION_PATH}`);
 
-    // --- DEBUG: Verifica se o arquivo já existe antes de conectar ---
     try {
         await fs.access(`${SESSION_PATH}/creds.json`);
-        console.log('📂 AVISO: Arquivo de sessão (creds.json) ENCONTRADO. Tentando recuperar sessão...');
+        console.log('📂 Arquivo de sessão encontrado. Tentando recuperar...');
     } catch (e) {
-        console.log('✨ INFO: Nenhum arquivo de sessão encontrado. Isso deve gerar um NOVO QR Code.');
+        console.log('✨ Sessão nova. Preparando handshake...');
     }
-    // ---------------------------------------------------------------
 
     try {
+        // 1. Busca a versão mais recente do WhatsApp Web suportada
+        const { version, isLatest } = await fetchLatestBaileysVersion();
+        console.log(`ℹ️ Usando WA v${version.join('.')}, isLatest: ${isLatest}`);
+
         const { state, saveCreds } = await useMultiFileAuthState(SESSION_PATH);
 
         socket = makeWASocket({
+            version, // 2. Informa a versão correta
             auth: state,
-            printQRInTerminal: false, // Desativado (usaremos o manual abaixo)
+            printQRInTerminal: false,
             logger: pino({ level: 'silent' }),
-            browser: ["Ubuntu", "Chrome", "20.0.04"], // Identidade estável
+            // 3. MUDANÇA CRÍTICA: Usar "Ubuntu" com assinatura oficial do Baileys
+            // Se der erro de novo, troque 'Ubuntu' por 'macOS' na linha abaixo
+            browser: Browsers.ubuntu('Chrome'), 
             connectTimeoutMs: 60000,
             defaultQueryTimeoutMs: 0,
             keepAliveIntervalMs: 10000,
@@ -85,7 +89,6 @@ const connectToWhatsApp = async () => {
 
                 const shouldWipe = statusCode === 401 || statusCode === 405 || statusCode === 403;
 
-                // Limpa referência do socket
                 socket = null;
                 connectionState.status = 'disconnected';
                 connectionState.isConnecting = false;
@@ -93,11 +96,13 @@ const connectToWhatsApp = async () => {
                 qrCode = '';
 
                 if (shouldWipe) {
-                    console.log(`⚠️ Sessão inválida (${statusCode}). Limpando tudo...`);
-                    // Delay para garantir desbloqueio do arquivo
+                    console.log(`⚠️ Sessão recusada (${statusCode})...`);
+                    // Se for 405 numa sessão NOVA, geralmente é IP ou Browser. 
+                    // Não adianta só apagar e tentar igual.
+                    
                     setTimeout(async () => {
                         await safeDeleteSession();
-                        console.log('🔴 Sessão limpa. Reinicie o processo ou chame /start-session.');
+                        console.log('🔴 Limpo. Tente rodar novamente.');
                     }, 2000);
                 } else if (statusCode !== DisconnectReason.loggedOut) {
                     console.log('🟡 Reconectando em 5s...');
@@ -124,19 +129,14 @@ const connectToWhatsApp = async () => {
 
 const startConnectionProcess = () => {
     if (connectionState.isConnecting || (socket && connectionState.status === 'connected')) return;
-    
     connectionState.isConnecting = true;
     console.log('⏳ Aguardando 2s para iniciar...');
     setTimeout(() => {
-        connectToWhatsApp().catch(err => {
-            console.error("❌ Falha na inicialização:", err);
-            connectionState.isConnecting = false;
-        });
+        connectToWhatsApp().catch(console.error);
     }, 2000);
 };
 
 // --- Endpoints ---
-
 app.post('/api/wpp/start-session', (req, res) => {
     if (connectionState.status === 'connected') return res.json({ success: true, message: 'Já conectado.', ...connectionState });
     startConnectionProcess();
@@ -165,27 +165,19 @@ app.post('/api/wpp/send-message', async (req, res) => {
 });
 
 app.post('/api/wpp/close-session', async (req, res) => {
-    if (socket) {
-        try { await socket.logout(); } catch (e) { socket.end(undefined); }
-    }
+    if (socket) { try { await socket.logout(); } catch (e) { socket.end(undefined); } }
     res.json({ success: true });
 });
 
 app.post('/api/wpp/reset-session', async (req, res) => {
     console.log('🟡 Reset manual solicitado...');
-    if (socket) { 
-        socket.ev.removeAllListeners();
-        socket.end(undefined); 
-        socket = null; 
-    }
+    if (socket) { socket.ev.removeAllListeners(); socket.end(undefined); socket = null; }
     connectionState = { status: 'disconnected', phoneNumber: '', isConnecting: false };
     qrCode = '';
-
     setTimeout(async () => {
         await safeDeleteSession();
-        console.log('✨ Reset concluído na pasta nova.');
+        console.log('✨ Reset concluído.');
     }, 1000);
-
     res.json({ success: true, message: 'Resetado.' });
 });
 
