@@ -34,7 +34,7 @@ const connectToWhatsApp = async () => {
 
     try {
         // Usa a pasta /data/ para persistência no Koyeb ou local
-        const { state, saveCreds } = await useMultiFileAuthState('/data/auth_info_baileys');
+        const { state, saveCreds } = await useMultiFileAuthState('/data/session_nova_v2');
 
         socket = makeWASocket({
             auth: state,
