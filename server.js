@@ -1,6 +1,5 @@
-// server.js - Versão V10 (FINAL)
-console.log("\n\n✅✅✅ CÓDIGO V10 CARREGADO COM SUCESSO ✅✅✅");
-console.log("Se você não ver essa mensagem, o arquivo não salvou!\n\n");
+// server.js - Versão V11 (CORREÇÃO PARA KOYEB/DEPLOY)
+console.log("🚀 INICIANDO V11 - AJUSTADO PARA DEPLOY KOYEB...");
 
 const fs = require('fs/promises');
 const express = require('express');
@@ -15,26 +14,37 @@ const {
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const qrcodeTerminal = require('qrcode-terminal');
-const NodeCache = require('node-cache'); // ESSENCIAL PARA O CELULAR NÃO GIRAR
+const NodeCache = require('node-cache');
 
 const app = express();
 app.use(cors({ origin: '*', credentials: true }));
 app.use(express.json());
 
-// Mantemos a pasta V5
-const SESSION_PATH = '/data/session_v5_nova'; 
+// --- MUDANÇA 1: Caminho relativo (Mais seguro para Koyeb/Containers) ---
+const SESSION_PATH = './session_auth_info'; 
 
-// --- CORREÇÃO DO "GIRANDO" ---
-// Esse cache responde aos pings do celular, impedindo que ele desconecte
 const msgRetryCounterCache = new NodeCache();
-
 let unauthorizedCount = 0;
 let socket = null;
 let qrCode = '';
 let connectionState = { status: 'disconnected', phoneNumber: '', isConnecting: false };
 
+// --- MUDANÇA 2: Rota Raiz para o Health Check do Koyeb ---
+app.get('/', (req, res) => {
+    res.send(`
+        <html>
+            <head><title>WhatsApp Bot V11</title></head>
+            <body style="font-family: sans-serif; text-align: center; padding-top: 50px;">
+                <h1>🟢 Servidor Online (V11)</h1>
+                <p>Status: <b>${connectionState.status}</b></p>
+                <p>Para conectar, verifique o terminal ou a rota /api/wpp/qr-code</p>
+            </body>
+        </html>
+    `);
+});
+
 const safeDeleteSession = async () => {
-    console.log(`🗑️ Limpando sessão...`);
+    console.log(`🗑️ Limpando sessão em: ${SESSION_PATH}`);
     try {
         await fs.rm(SESSION_PATH, { recursive: true, force: true });
         unauthorizedCount = 0;
@@ -42,24 +52,21 @@ const safeDeleteSession = async () => {
 };
 
 const connectToWhatsApp = async () => {
-    console.log(`🔌 V10: Iniciando conexão...`);
-
+    console.log(`🔌 V11: Iniciando socket...`);
     const { version } = await fetchLatestBaileysVersion();
     const { state, saveCreds } = await useMultiFileAuthState(SESSION_PATH);
 
     socket = makeWASocket({
         version,
         logger: pino({ level: 'silent' }),
-        printQRInTerminal: false,
+        printQRInTerminal: false, // Em produção, melhor ver pelo log ou endpoint
         auth: {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" })),
         },
-        // AQUI ESTÁ A CORREÇÃO:
-        msgRetryCounterCache, 
-        // ---------------------
+        msgRetryCounterCache,
         generateHighQualityLinkPreview: true,
-        browser: Browsers.macOS('Chrome'), // Identidade estável
+        browser: Browsers.macOS('Chrome'),
         syncFullHistory: false, 
         markOnlineOnConnect: false,
         connectTimeoutMs: 60000, 
@@ -74,7 +81,8 @@ const connectToWhatsApp = async () => {
             unauthorizedCount = 0;
             qrCode = qr;
             connectionState.status = 'connecting';
-            console.log('\n🟡 V10: NOVO QR CODE GERADO:\n');
+            console.log('\n🟡 QR CODE DISPONÍVEL (Verifique logs ou API)\n');
+            // Mantemos o print para debug, mas em deploy as vezes corta linhas longas
             qrcodeTerminal.generate(qr, { small: true });
         }
 
@@ -90,7 +98,7 @@ const connectToWhatsApp = async () => {
             if (statusCode === DisconnectReason.loggedOut || statusCode === 401 || statusCode === 403) {
                 if (statusCode === 401 && unauthorizedCount < 3) {
                     unauthorizedCount++;
-                    console.log(`⚠️ Erro 401 (${unauthorizedCount}/3). Reconectando sem limpar...`);
+                    console.log(`⚠️ Erro 401 (${unauthorizedCount}/3). Reconectando...`);
                     setTimeout(startConnectionProcess, 2000);
                 } else {
                     console.log(`⛔ Erro fatal. Limpando...`);
@@ -98,19 +106,18 @@ const connectToWhatsApp = async () => {
                     setTimeout(startConnectionProcess, 3000);
                 }
             } else if (statusCode === 515) {
-                console.log('🔵 Erro 515 (Normal). Reconectando...');
+                console.log('🔵 Erro 515. Reconectando...');
                 setTimeout(startConnectionProcess, 1000);
             } else {
                 setTimeout(startConnectionProcess, 3000);
             }
-
         } else if (connection === 'open') {
             connectionState.status = 'connected';
             connectionState.phoneNumber = socket.user?.id?.split(':')[0];
             connectionState.isConnecting = false;
             unauthorizedCount = 0;
             qrCode = '';
-            console.log(`✅✅✅ CONEXÃO ESTABELECIDA E ESTÁVEL: ${connectionState.phoneNumber} ✅✅✅`);
+            console.log(`✅ CONEXÃO ESTABELECIDA: ${connectionState.phoneNumber}`);
         }
     });
 
@@ -126,11 +133,10 @@ const startConnectionProcess = () => {
     });
 };
 
-// Rotas
 app.post('/api/wpp/start-session', (req, res) => {
     if (connectionState.status === 'connected') return res.json({ success: true, message: 'Online.' });
     startConnectionProcess();
-    res.json({ success: true, message: 'Iniciando V10...' });
+    res.json({ success: true, message: 'Iniciando V11...' });
 });
 
 app.get('/api/wpp/qr-code', (req, res) => {
@@ -143,8 +149,11 @@ app.get('/api/wpp/status', (req, res) => res.json(connectionState));
 app.post('/api/wpp/reset-session', async (req, res) => {
     if (socket) { socket.end(undefined); socket = null; }
     await safeDeleteSession();
-    res.json({ success: true, message: 'Reset V10 executado.' });
+    res.json({ success: true, message: 'Reset executado.' });
 });
 
+// Health check endpoint explícito
+app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
+
 const port = process.env.PORT || 8000;
-app.listen(port, '0.0.0.0', () => console.log(`🚀 SERVIDOR V10 RODANDO NA PORTA ${port}`));
+app.listen(port, '0.0.0.0', () => console.log(`🚀 SERVIDOR V11 RODANDO NA PORTA ${port}`));
